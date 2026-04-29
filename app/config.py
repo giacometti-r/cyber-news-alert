@@ -1,0 +1,98 @@
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass
+from typing import List
+
+from dotenv import load_dotenv
+
+
+DEFAULT_RSS_FEEDS = [
+    "https://krebsonsecurity.com/feed/",
+    "https://www.bleepingcomputer.com/feed/",
+    "https://therecord.media/feed/",
+    "https://www.darkreading.com/rss.xml",
+    "https://www.securityweek.com/feed/",
+]
+
+DEFAULT_GOOGLE_NEWS_QUERIES = [
+    'phishing attack company OR government OR university OR hospital',
+    'business email compromise attack organization',
+    'malvertising attack victim',
+    'credential theft phishing victim organization',
+    'smishing OR vishing attack',
+    'seo poisoning attack victim',
+    'watering hole attack organization',
+    'social media scam organization compromised',
+    'impersonation scam company targeted',
+    'fake update malware attack organization',
+]
+
+
+@dataclass(frozen=True)
+class Settings:
+    smtp_host: str
+    smtp_port: int
+    smtp_username: str
+    smtp_password: str
+    sender_email: str
+    recipient_email: str
+    database_url: str
+    log_level: str
+    request_timeout_seconds: int
+    max_articles_per_source: int
+    enable_gdelt: bool
+    gdelt_query_window_minutes: int
+    rss_feeds: List[str]
+    google_news_queries: List[str]
+
+
+class ConfigError(ValueError):
+    pass
+
+
+def _require(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise ConfigError(f"Missing required env var: {name}")
+    return value
+
+
+def _parse_list_env(name: str, default: List[str]) -> List[str]:
+    value = os.getenv(name)
+    if not value:
+        return default
+
+    value = value.strip()
+    if value.startswith("["):
+        try:
+            parsed = json.loads(value)
+            if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
+                raise ConfigError(f"{name} must be a JSON string array")
+            return [x.strip() for x in parsed if x.strip()]
+        except json.JSONDecodeError as exc:
+            raise ConfigError(f"{name} contains invalid JSON: {exc}") from exc
+
+    return [x.strip() for x in value.split(",") if x.strip()]
+
+
+def load_settings() -> Settings:
+    load_dotenv()
+
+    return Settings(
+        smtp_host=_require("SMTP_HOST"),
+        smtp_port=int(os.getenv("SMTP_PORT", "587")),
+        smtp_username=_require("SMTP_USERNAME"),
+        smtp_password=_require("SMTP_PASSWORD"),
+        sender_email=_require("SENDER_EMAIL"),
+        recipient_email=_require("RECIPIENT_EMAIL"),
+        database_url=_require("DATABASE_URL"),
+        log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
+        request_timeout_seconds=int(os.getenv("REQUEST_TIMEOUT_SECONDS", "15")),
+        max_articles_per_source=int(os.getenv("MAX_ARTICLES_PER_SOURCE", "50")),
+        enable_gdelt=os.getenv("ENABLE_GDELT", "true").strip().lower() in {"1", "true", "yes"},
+        gdelt_query_window_minutes=int(os.getenv("GDELT_QUERY_WINDOW_MINUTES", "180")),
+        rss_feeds=_parse_list_env("RSS_FEEDS", DEFAULT_RSS_FEEDS),
+        google_news_queries=_parse_list_env("GOOGLE_NEWS_QUERIES", DEFAULT_GOOGLE_NEWS_QUERIES),
+    )
