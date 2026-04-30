@@ -61,37 +61,37 @@ Optional runtime controls:
 Build and run scheduler + database:
 
 ```bash
-docker compose up --build -d postgres scheduler
+sudo docker compose up --build -d postgres scheduler
 ```
 
 Run one manual execution:
 
 ```bash
-docker compose run --rm app
+sudo docker compose run --rm app
 ```
 
 Check logs:
 
 ```bash
-docker compose logs -f scheduler
+sudo docker compose logs -f scheduler
 ```
 
 Stop all services and remove containers/network:
 
 ```bash
-docker compose down
+sudo docker compose down
 ```
 
 Restart everything cleanly:
 
 ```bash
-docker compose up --build -d
+sudo docker compose up --build -d
 ```
 
 Full reset (also removes Postgres data volume):
 
 ```bash
-docker compose down -v
+sudo docker compose down -v
 ```
 
 ## Hourly Scheduling
