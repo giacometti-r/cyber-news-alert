@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import smtplib
 from dataclasses import dataclass
 from email.message import EmailMessage
@@ -10,6 +11,17 @@ from typing import Protocol
 class AlertEmail:
     subject: str
     body: str
+
+
+@dataclass(frozen=True)
+class DigestEmailItem:
+    title: str
+    source_name: str
+    routing_reason: str
+    link: str
+    published_date: str
+    attack_type: str | None = None
+    victim_name: str | None = None
 
 
 class SmtpClient(Protocol):
@@ -35,6 +47,8 @@ class Emailer:
         self.recipient_email = recipient_email
 
     def build_subject(self, victim_name: str, victim_category: str, attack_type: str) -> str:
+        victim_name = self._normalize_inline(victim_name, max_chars=120)
+        attack_type = self._normalize_inline(attack_type, max_chars=80)
         if victim_category == "company":
             return f"{victim_name} was attacked using {attack_type}"
         return f"[{victim_name}] was attacked using {attack_type}"
@@ -49,8 +63,9 @@ class Emailer:
         published_date: str,
         link: str,
     ) -> str:
+        clean_abstract = self._clean_abstract(abstract)
         return (
-            f"Abstract:\n{abstract}\n\n"
+            f"Abstract:\n{clean_abstract}\n\n"
             f"Attack type: {attack_type}\n"
             f"Victim: {victim_name}\n"
             f"Victim category: {victim_category}\n"
@@ -59,10 +74,52 @@ class Emailer:
             f"Article link: {link}\n"
         )
 
-    def send(self, email: AlertEmail) -> None:
+    def _normalize_inline(self, value: str, max_chars: int) -> str:
+        clean = re.sub(r"\s+", " ", value.strip())
+        if len(clean) <= max_chars:
+            return clean
+        clipped = clean[:max_chars]
+        last_space = clipped.rfind(" ")
+        return clipped if last_space < 20 else clipped[:last_space]
+
+    def _clean_abstract(self, abstract: str) -> str:
+        clean = re.sub(r"\s+", " ", abstract.strip())
+        if not clean:
+            return "No abstract available."
+        return clean
+
+    def build_digest_subject(self, item_count: int) -> str:
+        return f"Cyber News Digest: {item_count} queued items"
+
+    def build_digest_body(self, items: list[DigestEmailItem]) -> str:
+        if not items:
+            return "No digest items."
+
+        grouped: dict[str, list[DigestEmailItem]] = {}
+        for item in items:
+            grouped.setdefault(item.routing_reason, []).append(item)
+
+        lines: list[str] = ["Queued items by reason:", ""]
+        for reason in sorted(grouped.keys()):
+            lines.append(f"Reason: {reason} ({len(grouped[reason])})")
+            for entry in grouped[reason]:
+                attack_type = entry.attack_type or "unknown"
+                victim = entry.victim_name or "n/a"
+                lines.append(
+                    f"- {entry.title}\n"
+                    f"  Source: {entry.source_name}\n"
+                    f"  Attack type: {attack_type}\n"
+                    f"  Victim: {victim}\n"
+                    f"  Published date: {entry.published_date}\n"
+                    f"  Link: {entry.link}"
+                )
+            lines.append("")
+        return "\n".join(lines).strip() + "\n"
+
+    def send(self, email: AlertEmail, recipient_email: str | None = None) -> None:
         message = EmailMessage()
         message["From"] = self.sender_email
-        message["To"] = self.recipient_email
+        message["To"] = recipient_email or self.recipient_email
         message["Subject"] = email.subject
         message.set_content(email.body)
 

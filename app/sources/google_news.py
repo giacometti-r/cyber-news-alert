@@ -19,4 +19,4 @@ class GoogleNewsRssSource(RssSource):
             "https://news.google.com/rss/search?"
             f"q={quote_plus(query_with_window)}&hl={quote_plus(language)}&gl={quote_plus(region)}&ceid={quote_plus(region + ':en')}"
         )
-        super().__init__(rss_url, max_articles)
+        super().__init__(rss_url, max_articles, source_name_override="Google News")

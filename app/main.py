@@ -80,19 +80,32 @@ def main() -> int:
 
     pipeline = MonitorPipeline(
         database=database,
-        fetcher=ArticleFetcher(settings.request_timeout_seconds),
+        fetcher=ArticleFetcher(
+            settings.request_timeout_seconds,
+            abstract_max_chars=settings.abstract_max_chars,
+        ),
         classifier=AttackClassifier(),
-        victim_extractor=VictimExtractor(),
+        victim_extractor=VictimExtractor(max_words=settings.max_victim_words),
         emailer=emailer,
+        min_victim_confidence=settings.min_victim_confidence,
+        enable_generic_victim_fallback=settings.enable_generic_victim_fallback,
+        generic_victim_name=settings.generic_victim_name,
+        default_victim_category=settings.default_victim_category,
+        incident_dedupe_window_hours=settings.incident_dedupe_window_hours,
+        digest_enabled=settings.digest_enabled,
+        digest_recipient_email=settings.digest_recipient_email,
+        digest_max_items_per_run=settings.digest_max_items_per_run,
     )
 
     articles = gather_articles(settings)
     metrics = pipeline.run(articles)
 
     logger.info(
-        "Run complete processed=%s alerts_sent=%s skipped=%s errors=%s",
+        "Run complete processed=%s alerts_sent=%s digest_sent=%s digest_queued=%s skipped=%s errors=%s",
         metrics.processed,
         metrics.alerts_sent,
+        metrics.digest_sent,
+        metrics.digest_queued,
         metrics.skipped,
         metrics.errors,
     )

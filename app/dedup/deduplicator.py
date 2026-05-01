@@ -15,6 +15,20 @@ TRACKING_QUERY_PARAMS = {
 }
 
 
+def normalize_incident_entity(value: str) -> str:
+    lowered = value.lower()
+    lowered = re.sub(r"[^a-z0-9 ]+", " ", lowered)
+    lowered = re.sub(r"\s+", " ", lowered).strip()
+    return lowered
+
+
+def build_incident_key(victim_name: str, attack_type: str) -> str:
+    normalized_victim = normalize_incident_entity(victim_name)
+    normalized_attack = normalize_incident_entity(attack_type)
+    token = f"{normalized_victim}|{normalized_attack}"
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 def canonicalize_url(url: str) -> str:
     parsed = urlparse(url.strip())
     path = re.sub(r"/+", "/", parsed.path or "/")

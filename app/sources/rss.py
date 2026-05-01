@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 import feedparser
 
@@ -9,15 +10,97 @@ from app.sources.base import SourceArticle
 
 logger = logging.getLogger(__name__)
 
+try:
+    from googlenewsdecoder import gnewsdecoder
+except ImportError:  # pragma: no cover - dependency should be present in production
+    logger.warning("Could not import googlenewsdecoder")
+    gnewsdecoder = None
+
 
 class RssSource:
-    def __init__(self, feed_url: str, max_articles: int) -> None:
+    def __init__(
+        self,
+        feed_url: str,
+        max_articles: int,
+        decode_google_news_urls: bool = True,
+        source_name_override: str | None = None,
+    ) -> None:
         self.feed_url = feed_url
         self.max_articles = max_articles
+        self.decode_google_news_urls = decode_google_news_urls
+        self.source_name_override = source_name_override
+
+    def _maybe_decode_google_news_url(self, url: str) -> str | None:
+        logger.debug(
+            "Google News decode check started decode_enabled=%s decoder_available=%s url=%s",
+            self.decode_google_news_urls,
+            gnewsdecoder is not None,
+            url,
+        )
+        if not self.decode_google_news_urls:
+            logger.debug("Google News decode skipped: feature disabled url=%s", url)
+            return url
+
+        parsed = urlparse(url)
+        logger.debug(
+            "Google News decode parsed URL scheme=%s netloc=%s path=%s query=%s",
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            parsed.query,
+        )
+        if parsed.netloc != "news.google.com":
+            logger.debug(
+                "Google News decode skipped: non-Google-News host netloc=%s url=%s",
+                parsed.netloc,
+                url,
+            )
+            return url
+        if gnewsdecoder is None:
+            logger.debug(
+                "Google News decode unavailable: googlenewsdecoder missing, dropping Google News URL url=%s",
+                url,
+            )
+            return None
+
+        try:
+            decoded = gnewsdecoder(url)
+            logger.debug(
+                "Google News decoder returned type=%s payload=%s",
+                type(decoded).__name__,
+                decoded,
+            )
+        except Exception as exc:
+            logger.warning("Failed to decode Google News URL url=%s error=%s", url, exc)
+            return None
+
+        status = decoded.get("status") if isinstance(decoded, dict) else None
+        decoded_url = decoded.get("decoded_url") if isinstance(decoded, dict) else None
+        logger.debug(
+            "Google News decode evaluation status=%s decoded_url_present=%s decoded_url=%s",
+            status,
+            bool(decoded_url),
+            decoded_url,
+        )
+
+        if status and decoded_url:
+            logger.debug("Google News link decoded original=%s decoded=%s", url, decoded_url)
+            return str(decoded_url)
+
+        logger.debug(
+            "Google News decode failed status_or_decoded_url_missing original=%s payload=%s",
+            url,
+            decoded,
+        )
+        logger.debug(
+            "Dropping undecoded Google News URL to avoid consent redirects original=%s",
+            url,
+        )
+        return None
 
     def fetch(self) -> list[SourceArticle]:
         parsed = feedparser.parse(self.feed_url)
-        source_name = parsed.feed.get("title", self.feed_url)
+        source_name = self.source_name_override or parsed.feed.get("title", self.feed_url)
 
         articles: list[SourceArticle] = []
         for entry in parsed.entries[: self.max_articles]:
@@ -25,6 +108,15 @@ class RssSource:
             title = entry.get("title")
             if not link or not title:
                 continue
+            decoded_link = self._maybe_decode_google_news_url(link)
+            if not decoded_link:
+                logger.debug(
+                    "Skipping RSS entry because Google News URL could not be decoded title=%s original_url=%s",
+                    title,
+                    link,
+                )
+                continue
+            link = decoded_link
 
             published_at = None
             published_parsed = entry.get("published_parsed") or entry.get("updated_parsed")

@@ -46,6 +46,16 @@ class Settings:
     gdelt_query_window_minutes: int
     rss_feeds: List[str]
     google_news_queries: List[str]
+    enable_generic_victim_fallback: bool
+    generic_victim_name: str
+    default_victim_category: str
+    min_victim_confidence: float
+    incident_dedupe_window_hours: int
+    digest_enabled: bool
+    digest_recipient_email: str
+    digest_max_items_per_run: int
+    abstract_max_chars: int
+    max_victim_words: int
 
 
 class ConfigError(ValueError):
@@ -95,4 +105,16 @@ def load_settings() -> Settings:
         gdelt_query_window_minutes=int(os.getenv("GDELT_QUERY_WINDOW_MINUTES", "180")),
         rss_feeds=_parse_list_env("RSS_FEEDS", DEFAULT_RSS_FEEDS),
         google_news_queries=_parse_list_env("GOOGLE_NEWS_QUERIES", DEFAULT_GOOGLE_NEWS_QUERIES),
+        enable_generic_victim_fallback=os.getenv("ENABLE_GENERIC_VICTIM_FALLBACK", "true").strip().lower()
+        in {"1", "true", "yes"},
+        generic_victim_name=os.getenv("GENERIC_VICTIM_NAME", "Unknown organization").strip() or "Unknown organization",
+        default_victim_category=os.getenv("DEFAULT_VICTIM_CATEGORY", "company").strip().lower() or "company",
+        min_victim_confidence=float(os.getenv("MIN_VICTIM_CONFIDENCE", "0.65")),
+        incident_dedupe_window_hours=int(os.getenv("INCIDENT_DEDUPE_WINDOW_HOURS", "48")),
+        digest_enabled=os.getenv("DIGEST_ENABLED", "true").strip().lower() in {"1", "true", "yes"},
+        digest_recipient_email=os.getenv("DIGEST_RECIPIENT_EMAIL", os.getenv("RECIPIENT_EMAIL", "")).strip()
+        or _require("RECIPIENT_EMAIL"),
+        digest_max_items_per_run=int(os.getenv("DIGEST_MAX_ITEMS_PER_RUN", "100")),
+        abstract_max_chars=int(os.getenv("ABSTRACT_MAX_CHARS", "420")),
+        max_victim_words=int(os.getenv("MAX_VICTIM_WORDS", "8")),
     )

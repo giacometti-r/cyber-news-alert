@@ -14,7 +14,7 @@ class Article(Base):
     __tablename__ = "articles"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    source_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    source_name: Mapped[str] = mapped_column(String(255), nullable=False)
     source_type: Mapped[str] = mapped_column(String(40), nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     url: Mapped[str] = mapped_column(Text, nullable=False)
@@ -22,9 +22,11 @@ class Article(Base):
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     article_text: Mapped[str] = mapped_column(Text, nullable=False)
     abstract: Mapped[str] = mapped_column(Text, nullable=False)
+    article_type: Mapped[str] = mapped_column(String(40), nullable=False, default="opinion")
     attack_type: Mapped[str] = mapped_column(String(80), nullable=False)
     victim_name: Mapped[str] = mapped_column(String(200), nullable=False)
     victim_category: Mapped[str] = mapped_column(String(40), nullable=False)
+    incident_key: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
@@ -50,6 +52,8 @@ class Alert(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     article_id: Mapped[int] = mapped_column(ForeignKey("articles.id", ondelete="CASCADE"), nullable=False)
     recipient_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    channel: Mapped[str] = mapped_column(String(20), nullable=False, default="immediate")
+    routing_reason: Mapped[str | None] = mapped_column(String(80), nullable=True)
     subject: Mapped[str] = mapped_column(Text, nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(40), nullable=False)

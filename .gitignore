@@ -219,3 +219,6 @@ __marimo__/
 
 # codex
 .codex
+
+# vs code
+.vscode

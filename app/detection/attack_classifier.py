@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Literal
 
 
 ATTACK_PATTERNS: dict[str, list[re.Pattern[str]]] = {
@@ -18,50 +19,162 @@ ATTACK_PATTERNS: dict[str, list[re.Pattern[str]]] = {
     "credential theft": [re.compile(r"\bcredential(?:s)? theft\b", re.I), re.compile(r"\bstolen credentials?\b", re.I)],
 }
 
-INCIDENT_PATTERNS = [
-    re.compile(r"\b(attacked|targeted|compromised|breach(?:ed)?|stolen|hijacked|defraud(?:ed)?)\b", re.I),
-    re.compile(r"\b(campaign|incident|scam|intrusion)\b", re.I),
+ARTICLE_TYPE = Literal[
+    "incident",
+    "campaign_report",
+    "advisory",
+    "press_release",
+    "legal_followup",
+    "opinion",
 ]
 
-NEGATIVE_PATTERNS = [
-    re.compile(r"\bhow to\b", re.I),
-    re.compile(r"\bawareness\b", re.I),
-    re.compile(r"\bbest practices\b", re.I),
-    re.compile(r"\bwebinar\b", re.I),
-    re.compile(r"\bproduct announcement\b", re.I),
+SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+
+INCIDENT_PATTERNS = [
+    re.compile(r"\b(attacked|targeted|compromised|breach(?:ed)?|stolen|hijacked|defraud(?:ed)?|routed|hit by)\b", re.I),
+    re.compile(r"\b(investigat(?:e|ed|ing)|confirmed|reported|disclosed|warn(?:ed|ing))\b", re.I),
+    re.compile(r"\b(incident|victims?|loss(?:es)?|stole|theft)\b", re.I),
+]
+
+CAMPAIGN_PATTERNS = [
+    re.compile(r"\b(campaign|operation|threat intelligence|researchers|report)\b", re.I),
+    re.compile(r"\b(targeting citizens|worldwide|surge|trend)\b", re.I),
+]
+
+ADVISORY_PATTERNS = [
+    re.compile(r"\b(patch tuesday|security updates?|emergency update|cve-\d{4}-\d+)\b", re.I),
+    re.compile(r"\b(vulnerabilit(?:y|ies)|auth bypass|fixes?)\b", re.I),
+]
+
+PRESS_RELEASE_PATTERNS = [
     re.compile(r"\bpress release\b", re.I),
-    re.compile(r"\bthreat report\b", re.I),
-    re.compile(r"\bresearch report\b", re.I),
+    re.compile(r"\b(prnewswire|announced|launch(?:es|ed)|channel partner program)\b", re.I),
+]
+
+LEGAL_FOLLOWUP_PATTERNS = [
+    re.compile(r"\b(plead(?:ed|s)? guilty|sentenced|indicted|arrested|charged)\b", re.I),
+    re.compile(r"\b(federal prison|court|prosecutors?)\b", re.I),
+]
+
+OPINION_PATTERNS = [
+    re.compile(r"\b(how to|best practices|opinion|career|analysis)\b", re.I),
+    re.compile(r"\b(without security is like|what you see is not all there is)\b", re.I),
 ]
 
 
 @dataclass(frozen=True)
 class ClassificationResult:
-    is_attack: bool
+    article_type: ARTICLE_TYPE
     attack_type: str | None
-    reason: str
+    attack_confidence: float
+    incident_confidence: float
+    reasons: tuple[str, ...]
+
+    @property
+    def is_attack(self) -> bool:
+        return self.article_type == "incident" and self.attack_type is not None
+
+    @property
+    def reason(self) -> str:
+        return self.reasons[0] if self.reasons else "unspecified"
 
 
 class AttackClassifier:
     def classify(self, title: str, text: str) -> ClassificationResult:
-        content = f"{title}. {text}"
+        lead = self._build_lead(text)
+        body = text[:6000]
 
-        attack_type = self._detect_attack_type(content)
-        if not attack_type:
-            return ClassificationResult(False, None, "no-attack-keyword")
+        attack_type, attack_confidence = self._detect_attack_type(title, lead, body)
+        incident_confidence = self._score_patterns(INCIDENT_PATTERNS, title, lead, body)
+        campaign_score = self._score_patterns(CAMPAIGN_PATTERNS, title, lead, body)
+        advisory_score = self._score_patterns(ADVISORY_PATTERNS, title, lead, body)
+        press_score = self._score_patterns(PRESS_RELEASE_PATTERNS, title, lead, body)
+        legal_score = self._score_patterns(LEGAL_FOLLOWUP_PATTERNS, title, lead, body)
+        opinion_score = self._score_patterns(OPINION_PATTERNS, title, lead, body)
 
-        incident_score = sum(1 for p in INCIDENT_PATTERNS if p.search(content))
-        if incident_score == 0:
-            return ClassificationResult(False, attack_type, "missing-incident-language")
+        reasons: list[str] = []
+        if press_score >= 0.8:
+            reasons.append("press-release-cues")
+            article_type: ARTICLE_TYPE = "press_release"
+        elif legal_score >= 0.8:
+            reasons.append("legal-followup-cues")
+            article_type = "legal_followup"
+        elif advisory_score >= 0.8 and incident_confidence < 0.8:
+            reasons.append("advisory-cues")
+            article_type = "advisory"
+        elif opinion_score >= 0.8 and incident_confidence < 0.8:
+            reasons.append("opinion-cues")
+            article_type = "opinion"
+        elif incident_confidence >= 0.8:
+            reasons.append("incident-evidence")
+            article_type = "incident"
+        elif campaign_score >= 0.7:
+            reasons.append("campaign-report-cues")
+            article_type = "campaign_report"
+        elif advisory_score >= 0.6:
+            reasons.append("advisory-cues")
+            article_type = "advisory"
+        elif legal_score >= 0.6:
+            reasons.append("legal-followup-cues")
+            article_type = "legal_followup"
+        elif press_score >= 0.6:
+            reasons.append("press-release-cues")
+            article_type = "press_release"
+        elif opinion_score >= 0.6:
+            reasons.append("opinion-cues")
+            article_type = "opinion"
+        else:
+            reasons.append("default-opinion")
+            article_type = "opinion"
 
-        negative_score = sum(1 for p in NEGATIVE_PATTERNS if p.search(content))
-        if negative_score >= 2:
-            return ClassificationResult(False, attack_type, "likely-generic-or-marketing")
+        if attack_type:
+            reasons.append(f"attack-type:{attack_type}")
+        else:
+            reasons.append("no-in-taxonomy-attack-type")
 
-        return ClassificationResult(True, attack_type, "qualified")
+        if article_type == "incident" and attack_type is None:
+            reasons.append("out-of-taxonomy")
 
-    def _detect_attack_type(self, content: str) -> str | None:
+        return ClassificationResult(
+            article_type=article_type,
+            attack_type=attack_type,
+            attack_confidence=attack_confidence,
+            incident_confidence=incident_confidence,
+            reasons=tuple(reasons),
+        )
+
+    def _build_lead(self, text: str) -> str:
+        sentences = SENTENCE_SPLIT_RE.split(text)
+        return " ".join(sentences[:4])[:1500]
+
+    def _detect_attack_type(self, title: str, lead: str, body: str) -> tuple[str | None, float]:
+        best_attack: str | None = None
+        best_score = 0.0
         for attack_type, patterns in ATTACK_PATTERNS.items():
-            if any(pattern.search(content) for pattern in patterns):
-                return attack_type
-        return None
+            score = 0.0
+            for pattern in patterns:
+                if pattern.search(title):
+                    score += 0.65
+                if pattern.search(lead):
+                    score += 0.3
+                if pattern.search(body):
+                    score += 0.12
+            if score > best_score:
+                best_attack = attack_type
+                best_score = score
+
+        confidence = min(best_score, 1.0)
+        if confidence < 0.25:
+            return None, confidence
+        return best_attack, confidence
+
+    def _score_patterns(self, patterns: list[re.Pattern[str]], title: str, lead: str, body: str) -> float:
+        score = 0.0
+        for pattern in patterns:
+            if pattern.search(title):
+                score += 0.5
+            if pattern.search(lead):
+                score += 0.3
+            if pattern.search(body):
+                score += 0.2
+        return min(score, 1.0)
