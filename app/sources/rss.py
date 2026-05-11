@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 import feedparser
 
+from app.fetch.url_guard import UnsafeUrlError, validate_public_http_url
 from app.sources.base import SourceArticle
 
 logger = logging.getLogger(__name__)
@@ -99,7 +100,13 @@ class RssSource:
         return None
 
     def fetch(self) -> list[SourceArticle]:
-        parsed = feedparser.parse(self.feed_url)
+        try:
+            safe_feed_url = validate_public_http_url(self.feed_url, require_dns_resolution=False)
+        except UnsafeUrlError as exc:
+            logger.warning("Skipping RSS feed due to unsafe URL feed_url=%s error=%s", self.feed_url, exc)
+            return []
+
+        parsed = feedparser.parse(safe_feed_url)
         source_name = self.source_name_override or parsed.feed.get("title", self.feed_url)
 
         articles: list[SourceArticle] = []
@@ -116,7 +123,17 @@ class RssSource:
                     link,
                 )
                 continue
-            link = decoded_link
+
+            try:
+                link = validate_public_http_url(decoded_link, require_dns_resolution=False)
+            except UnsafeUrlError as exc:
+                logger.debug(
+                    "Skipping RSS entry because URL failed safety checks title=%s url=%s error=%s",
+                    title,
+                    decoded_link,
+                    exc,
+                )
+                continue
 
             published_at = None
             published_parsed = entry.get("published_parsed") or entry.get("updated_parsed")

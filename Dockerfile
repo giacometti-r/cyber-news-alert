@@ -10,7 +10,9 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 ARG SUPERCRONIC_VERSION=v0.2.34
+ARG SUPERCRONIC_SHA256=a51b340a83c5bd035742f0d7191555f9663876405e494dbf824537d64f3e39c6
 RUN curl -fsSL -o /usr/local/bin/supercronic "https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-linux-amd64" \
+    && echo "${SUPERCRONIC_SHA256}  /usr/local/bin/supercronic" | sha256sum -c - \
     && chmod +x /usr/local/bin/supercronic
 
 COPY requirements.txt .

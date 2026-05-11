@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import smtplib
+import ssl
 from dataclasses import dataclass
 from email.message import EmailMessage
 from typing import Protocol
@@ -123,7 +124,8 @@ class Emailer:
         message["Subject"] = email.subject
         message.set_content(email.body)
 
+        tls_context = ssl.create_default_context()
         with smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=20) as smtp:
-            smtp.starttls()
+            smtp.starttls(context=tls_context)
             smtp.login(self.smtp_username, self.smtp_password)
             smtp.send_message(message)

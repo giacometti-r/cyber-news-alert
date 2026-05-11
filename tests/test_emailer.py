@@ -1,4 +1,6 @@
-from app.alerts.emailer import DigestEmailItem, Emailer
+import ssl
+
+from app.alerts.emailer import AlertEmail, DigestEmailItem, Emailer
 
 
 def _emailer() -> Emailer:
@@ -92,3 +94,39 @@ def test_digest_body_groups_items_by_reason() -> None:
     assert "Reason: campaign_report (2)" in body
     assert "Story A" in body
     assert "Story B" in body
+
+
+def test_send_uses_verifying_tls_context(monkeypatch: object) -> None:
+    captured: dict[str, object] = {}
+
+    class FakeSmtp:
+        def __init__(self, host: str, port: int, timeout: int) -> None:
+            captured["host"] = host
+            captured["port"] = port
+            captured["timeout"] = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+            del exc_type, exc, tb
+            return False
+
+        def starttls(self, context: ssl.SSLContext | None = None) -> None:
+            captured["context"] = context
+
+        def login(self, username: str, password: str) -> None:
+            captured["login"] = (username, password)
+
+        def send_message(self, msg: object) -> None:
+            captured["message"] = msg
+
+    monkeypatch.setattr("app.alerts.emailer.smtplib.SMTP", FakeSmtp)
+
+    emailer = _emailer()
+    emailer.send(AlertEmail(subject="Subject", body="Body"))
+
+    context = captured.get("context")
+    assert isinstance(context, ssl.SSLContext)
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname is True

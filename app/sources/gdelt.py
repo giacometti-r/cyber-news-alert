@@ -9,6 +9,7 @@ import requests
 from dateutil import parser as date_parser
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
+from app.fetch.url_guard import UnsafeUrlError, validate_public_http_url
 from app.sources.base import SourceArticle
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,8 @@ class GdeltSource:
         self.max_articles = max_articles
         self.timeout = timeout
         self.timespan_minutes = timespan_minutes
+        self._session = requests.Session()
+        self._session.trust_env = False
 
     @retry(
         reraise=True,
@@ -28,7 +31,8 @@ class GdeltSource:
         retry=retry_if_exception_type(requests.RequestException),
     )
     def _fetch_json(self, url: str) -> dict[str, Any]:
-        response = requests.get(url, timeout=self.timeout)
+        safe_url = validate_public_http_url(url, require_dns_resolution=False)
+        response = self._session.get(safe_url, timeout=self.timeout)
         response.raise_for_status()
         return response.json()
 
@@ -48,6 +52,16 @@ class GdeltSource:
             title = item.get("title")
             link = item.get("url")
             if not title or not link:
+                continue
+            try:
+                link = validate_public_http_url(link, require_dns_resolution=False)
+            except UnsafeUrlError as exc:
+                logger.debug(
+                    "Skipping GDELT entry because URL failed safety checks title=%s url=%s error=%s",
+                    title,
+                    link,
+                    exc,
+                )
                 continue
 
             published_at = None

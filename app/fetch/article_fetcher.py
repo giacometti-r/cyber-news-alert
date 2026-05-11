@@ -4,10 +4,13 @@ import logging
 import re
 from dataclasses import dataclass
 from html import unescape
+from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
+from app.fetch.url_guard import UnsafeUrlError, validate_public_http_url
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +27,13 @@ BOILERPLATE_ATTR_RE = re.compile(
     r"(nav|menu|header|footer|promo|advert|ad-|share|social|cookie|newsletter|subscribe)",
     re.I,
 )
+ALLOWED_CONTENT_TYPES = (
+    "text/html",
+    "application/xhtml+xml",
+    "text/plain",
+    "application/xml",
+    "text/xml",
+)
 
 
 @dataclass(frozen=True)
@@ -33,10 +43,20 @@ class ArticleContent:
 
 
 class ArticleFetcher:
-    def __init__(self, timeout_seconds: int, abstract_max_chars: int = 420) -> None:
+    def __init__(
+        self,
+        timeout_seconds: int,
+        abstract_max_chars: int = 420,
+        max_redirect_hops: int = 5,
+        max_response_bytes: int = 2_000_000,
+    ) -> None:
         self.timeout_seconds = timeout_seconds
         self.abstract_max_chars = abstract_max_chars
+        self.max_redirect_hops = max_redirect_hops
+        self.max_response_bytes = max_response_bytes
         self.user_agent = "CyberNewsAlert/1.0 (+https://example.local)"
+        self._session = requests.Session()
+        self._session.trust_env = False
 
     @retry(
         reraise=True,
@@ -45,18 +65,33 @@ class ArticleFetcher:
         retry=retry_if_exception_type(requests.RequestException),
     )
     def _download(self, url: str) -> str:
-        response = requests.get(
-            url,
-            timeout=self.timeout_seconds,
-            headers={"User-Agent": self.user_agent},
-        )
-        response.raise_for_status()
-        return response.text
+        current_url = validate_public_http_url(url)
+
+        for _ in range(self.max_redirect_hops + 1):
+            with self._session.get(
+                current_url,
+                timeout=self.timeout_seconds,
+                headers={"User-Agent": self.user_agent},
+                allow_redirects=False,
+                stream=True,
+            ) as response:
+                if response.is_redirect or response.is_permanent_redirect:
+                    location = response.headers.get("Location")
+                    if not location:
+                        raise requests.RequestException("Redirect response missing Location header")
+                    current_url = validate_public_http_url(urljoin(current_url, location))
+                    continue
+
+                response.raise_for_status()
+                self._enforce_content_type(response.headers.get("Content-Type"))
+                return self._read_body_with_limit(response)
+
+        raise requests.TooManyRedirects(f"Exceeded redirect hop limit for url={url}")
 
     def fetch(self, url: str) -> ArticleContent | None:
         try:
             html = self._download(url)
-        except requests.RequestException as exc:
+        except (requests.RequestException, UnsafeUrlError) as exc:
             logger.warning("Failed to fetch article url=%s error=%s", url, exc)
             return None
 
@@ -71,6 +106,39 @@ class ArticleFetcher:
             return None
 
         return ArticleContent(full_text=text, abstract=abstract)
+
+    def _enforce_content_type(self, content_type: str | None) -> None:
+        if not content_type:
+            return
+
+        lowered = content_type.lower()
+        if any(allowed in lowered for allowed in ALLOWED_CONTENT_TYPES):
+            return
+        raise requests.RequestException(f"Unsupported content type: {content_type}")
+
+    def _read_body_with_limit(self, response: requests.Response) -> str:
+        content_length = response.headers.get("Content-Length")
+        if content_length:
+            try:
+                if int(content_length) > self.max_response_bytes:
+                    raise requests.RequestException(
+                        f"Response too large content_length={content_length} limit={self.max_response_bytes}"
+                    )
+            except ValueError:
+                logger.debug("Ignoring non-numeric Content-Length value=%s", content_length)
+
+        raw = bytearray()
+        for chunk in response.iter_content(chunk_size=8192):
+            if not chunk:
+                continue
+            raw.extend(chunk)
+            if len(raw) > self.max_response_bytes:
+                raise requests.RequestException(
+                    f"Response exceeded byte limit limit={self.max_response_bytes}"
+                )
+
+        encoding = response.encoding or "utf-8"
+        return raw.decode(encoding, errors="replace")
 
     def _extract_text(self, soup: BeautifulSoup) -> str:
         for tag in soup(["script", "style", "noscript", "header", "footer", "nav", "form", "aside"]):

@@ -71,6 +71,15 @@ Deprecated compatibility controls:
 - `GENERIC_VICTIM_NAME`
 - `DEFAULT_VICTIM_CATEGORY`
 
+## Security Controls
+
+- **Outbound URL safety**: article and source URLs are restricted to `http/https`, reject embedded credentials, and block localhost/private/link-local/multicast/reserved/non-global targets.
+- **Redirect safety**: article fetches use manual redirect handling with URL re-validation on each hop to prevent SSRF via open redirects.
+- **Transport hardening**: SMTP delivery uses STARTTLS with explicit certificate-verifying TLS context.
+- **Request isolation**: HTTP clients use a dedicated `requests.Session` with `trust_env=False` to avoid `.netrc`/proxy credential leakage through ambient environment settings.
+- **Response limits**: article downloads enforce content-type checks and response size limits before parsing.
+- **Dependency policy**: pin dependencies and update promptly for security advisories (including transitive/development tooling).
+
 ## Run with Docker
 
 Build and run scheduler + database:
